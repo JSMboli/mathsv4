@@ -12,12 +12,13 @@ let stats = { stars: 0, correct: 0, wrong: 0 };
 let consecutiveWrongs = 0; 
 let currentProblemStr = "";
 
+
 // ------------------------------------------------------------
-// Learner persistence
+// Learner persistence (added without changing the original maths rules)
 // ------------------------------------------------------------
 const STORAGE_KEY = 'starlightMathsLearner_v1';
 let learner = null;
-let hasRestoredCurrentProblem = false;
+let isRestoringProblem = false;
 
 function createLearner(name) {
   const now = new Date().toISOString();
@@ -37,29 +38,26 @@ function loadLearner() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || !parsed.name) return null;
-    return {
-      ...createLearner(String(parsed.name).trim()),
+    if (!parsed || typeof parsed !== 'object' || !String(parsed.name || '').trim()) return null;
+
+    const base = createLearner(String(parsed.name).trim());
+    const loaded = {
+      ...base,
       ...parsed,
-      stats: { stars: 0, correct: 0, wrong: 0, ...(parsed.stats || {}) },
-      history: Array.isArray(parsed.history) ? parsed.history : []
+      stats: { ...base.stats, ...(parsed.stats || {}) },
+      history: Array.isArray(parsed.history) ? parsed.history : [],
+      currentSession: parsed.currentSession || null
     };
+
+    // Support the v1 format that stored inputs by element id.
+    if (loaded.currentSession && loaded.currentSession.inputs && !Array.isArray(loaded.currentSession.inputs)) {
+      loaded.currentSession.inputsById = loaded.currentSession.inputs;
+      delete loaded.currentSession.inputs;
+    }
+    return loaded;
   } catch (error) {
     console.warn('Could not load saved learner progress.', error);
     return null;
-  }
-}
-
-function persistLearner(showStatus = true) {
-  if (!learner) return;
-  try {
-    learner.stats = { ...stats };
-    learner.lastActiveAt = new Date().toISOString();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(learner));
-    if (showStatus) flashSaveStatus('✓ Saved automatically');
-  } catch (error) {
-    console.warn('Could not save learner progress.', error);
-    flashSaveStatus('⚠ Could not save locally');
   }
 }
 
@@ -73,12 +71,22 @@ function flashSaveStatus(message) {
   }, 1800);
 }
 
+function persistLearner(showStatus = false) {
+  if (!learner) return;
+  try {
+    learner.stats = { ...stats };
+    learner.lastActiveAt = new Date().toISOString();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(learner));
+    if (showStatus) flashSaveStatus('✓ Saved automatically');
+    updateLearnerUI();
+  } catch (error) {
+    console.warn('Could not save learner progress.', error);
+    flashSaveStatus('⚠ Could not save locally');
+  }
+}
+
 function getCurrentInputsSnapshot() {
-  const inputs = {};
-  document.querySelectorAll('#column-grid input').forEach((input) => {
-    if (input.id) inputs[input.id] = input.value;
-  });
-  return inputs;
+  return Array.from(document.querySelectorAll('#column-grid input')).map(input => input.value);
 }
 
 function saveCurrentSession() {
@@ -101,26 +109,48 @@ function restoreCurrentSession() {
   if (!session || !session.mode || !session.numA || !session.numB) return false;
 
   currentMode = session.mode;
-  digitsCount = session.digitsCount || parseInt(session.mode.replace(/\D/g, ''), 10) || 2;
+  digitsCount = Number(session.digitsCount) || parseInt(session.mode.replace(/\D/g, ''), 10) || 2;
   isSubtraction = !!session.isSubtraction;
   isDivision = !!session.isDivision;
   numA = Number(session.numA);
   numB = Number(session.numB);
   currentProblemStr = session.currentProblemStr || `${numA} ${isDivision ? '÷' : (isSubtraction ? '-' : (currentMode.startsWith('mult') ? '×' : '+'))} ${numB}`;
 
-  if (isDivision) {
-    renderDivisionProblem(false);
-  } else {
-    renderColumnProblem(false);
+  isRestoringProblem = true;
+  try {
+    if (isDivision) generateDivisionProblem();
+    else generateColumnProblem();
+  } finally {
+    isRestoringProblem = false;
   }
 
-  const inputs = session.inputs || {};
-  Object.entries(inputs).forEach(([id, value]) => {
-    const el = document.getElementById(id);
-    if (el) el.value = value;
-  });
+  const inputs = Array.isArray(session.inputs) ? session.inputs : null;
+  if (inputs) {
+    const domInputs = Array.from(document.querySelectorAll('#column-grid input'));
+    domInputs.forEach((input, index) => {
+      if (index < inputs.length) input.value = inputs[index] ?? '';
+    });
+  } else if (session.inputsById && typeof session.inputsById === 'object') {
+    Object.entries(session.inputsById).forEach(([id, value]) => {
+      const el = document.getElementById(id);
+      if (el) el.value = value;
+    });
+  }
+
   updateStatsUI();
   return true;
+}
+
+function renderHistory() {
+  const list = document.getElementById('history-list');
+  if (!list) return;
+  list.innerHTML = '';
+  (learner ? learner.history : []).forEach(item => {
+    const li = document.createElement('li');
+    li.className = 'history-item' + (item.isWrong ? ' wrong' : '');
+    li.innerText = typeof item === 'string' ? item : item.text;
+    list.appendChild(li);
+  });
 }
 
 function openWelcome(returning = false) {
@@ -138,40 +168,49 @@ function openWelcome(returning = false) {
     returningView.hidden = false;
     subtitle.textContent = 'Your saved progress is ready.';
     document.getElementById('returning-name').textContent = `Welcome back, ${learner.name}!`;
-    document.getElementById('resume-stars').textContent = learner.stats.stars;
-    document.getElementById('resume-correct').textContent = learner.stats.correct;
+    document.getElementById('resume-stars').textContent = stats.stars;
+    document.getElementById('resume-correct').textContent = stats.correct;
     document.getElementById('resume-history').textContent = learner.history.length;
     document.getElementById('resume-message').textContent = learner.currentSession
-      ? `Your last ${learner.currentSession.mode.replace(/[0-9]/g, '').replace('add', 'addition').replace('sub', 'subtraction').replace('mult', 'multiplication').replace('div', 'division')} problem is ready to continue.`
+      ? 'Your last maths problem is ready to continue.'
       : 'Start your next maths problem and your progress will keep saving automatically.';
   } else {
     form.hidden = false;
     returningView.hidden = true;
     subtitle.textContent = "Let's save your maths progress as you learn.";
     nameInput.value = '';
+    document.getElementById('learner-name-error').textContent = '';
     setTimeout(() => nameInput.focus(), 50);
   }
 }
 
 function closeWelcome() {
-  const overlay = document.getElementById('welcome-overlay');
-  overlay.setAttribute('aria-hidden', 'true');
+  document.getElementById('welcome-overlay').setAttribute('aria-hidden', 'true');
   document.getElementById('learner-bar').hidden = false;
 }
-
 
 function updateLearnerUI() {
   if (!learner) return;
   const initial = learner.name.charAt(0).toUpperCase() || '⭐';
-  document.getElementById('learner-avatar').textContent = initial;
-  document.getElementById('learner-greeting').textContent = `Hi ${learner.name}! Keep going, superstar! ⭐`;
-  document.getElementById('learner-bar').hidden = false;
-  document.getElementById('profile-avatar-large').textContent = initial;
-  document.getElementById('profile-name-display').textContent = learner.name;
-  document.getElementById('profile-created-display').textContent = `Learning since ${new Date(learner.createdAt).toLocaleDateString()}`;
-  document.getElementById('profile-stars').textContent = stats.stars;
-  document.getElementById('profile-correct').textContent = stats.correct;
-  document.getElementById('profile-wrong').textContent = stats.wrong;
+  const avatar = document.getElementById('learner-avatar');
+  const greeting = document.getElementById('learner-greeting');
+  const bar = document.getElementById('learner-bar');
+  const profileAvatar = document.getElementById('profile-avatar-large');
+  const profileName = document.getElementById('profile-name-display');
+  const profileCreated = document.getElementById('profile-created-display');
+  const profileStars = document.getElementById('profile-stars');
+  const profileCorrect = document.getElementById('profile-correct');
+  const profileWrong = document.getElementById('profile-wrong');
+
+  if (avatar) avatar.textContent = initial;
+  if (greeting) greeting.textContent = `Hi ${learner.name}! Keep going, superstar! ⭐`;
+  if (bar) bar.hidden = false;
+  if (profileAvatar) profileAvatar.textContent = initial;
+  if (profileName) profileName.textContent = learner.name;
+  if (profileCreated) profileCreated.textContent = `Learning since ${new Date(learner.createdAt).toLocaleDateString()}`;
+  if (profileStars) profileStars.textContent = stats.stars;
+  if (profileCorrect) profileCorrect.textContent = stats.correct;
+  if (profileWrong) profileWrong.textContent = stats.wrong;
 }
 
 function startLearner(name) {
@@ -185,27 +224,28 @@ function startLearner(name) {
   learner = createLearner(cleanName);
   stats = { ...learner.stats };
   currentMode = '';
-  numA = 0; numB = 0; currentProblemStr = '';
+  numA = 0;
+  numB = 0;
+  currentProblemStr = '';
   learner.currentSession = null;
   persistLearner(false);
   updateLearnerUI();
   closeWelcome();
-  hasRestoredCurrentProblem = false;
   setMode('add2');
 }
 
 function continueLearner() {
-  updateLearnerUI();
   closeWelcome();
-  hasRestoredCurrentProblem = restoreCurrentSession();
-  if (!hasRestoredCurrentProblem) setMode('add2');
-  persistLearner(false);
+  const restored = restoreCurrentSession();
+  if (!restored) setMode('add2');
+  updateStatsUI();
+  updateLearnerUI();
   renderHistory();
+  persistLearner(false);
 }
 
 function startNewProblem() {
   closeWelcome();
-  hasRestoredCurrentProblem = false;
   learner.currentSession = null;
   persistLearner(false);
   setMode('add2');
@@ -213,12 +253,7 @@ function startNewProblem() {
 }
 
 function changeLearner() {
-  if (!learner) {
-    openWelcome(false);
-    return;
-  }
-  const proceed = window.confirm(`Switching learner will replace ${learner.name}'s saved records on this browser. Continue?`);
-  if (!proceed) return;
+  if (!learner) return openWelcome(false);
   saveCurrentSession();
   openWelcome(false);
 }
@@ -230,26 +265,6 @@ function openProfile() {
 
 function closeProfile() {
   document.getElementById('profile-overlay').setAttribute('aria-hidden', 'true');
-}
-
-function renderHistory() {
-  const list = document.getElementById('history-list');
-  if (!list) return;
-  list.innerHTML = '';
-  (learner ? learner.history : []).forEach(item => {
-    const li = document.createElement('li');
-    li.className = 'history-item' + (item.isWrong ? ' wrong' : '');
-    li.textContent = item.text;
-    list.appendChild(li);
-  });
-}
-
-function saveInputsAfterChange() {
-  if (!learner || !currentMode) return;
-  saveCurrentSession();
-  flashSaveStatus('Saving…');
-  clearTimeout(saveInputsAfterChange.timer);
-  saveInputsAfterChange.timer = setTimeout(() => persistLearner(true), 250);
 }
 
 // Place names ordered right to left (0 = Ones, 1 = Tens, ...)
@@ -295,7 +310,7 @@ function attachInputSanitizer(input, type = 'number') {
     } else if (type === 'cross') {
       this.value = this.value.replace(/[^0-9/]/g, '');
     }
-    saveInputsAfterChange();
+    saveCurrentSession();
   });
 }
 
@@ -303,32 +318,34 @@ function updateStatsUI() {
   document.getElementById('stat-stars').innerText = stats.stars;
   document.getElementById('stat-correct').innerText = stats.correct;
   document.getElementById('stat-wrong').innerText = stats.wrong;
-  if (learner) {
-    learner.stats = { ...stats };
-    updateLearnerUI();
-  }
+  if (learner) updateLearnerUI();
 }
 
 function addToHistory(logText, isWrong = false) {
-  if (!learner) return;
-  const record = {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    text: logText,
-    isWrong: !!isWrong,
-    timestamp: new Date().toISOString()
-  };
-  learner.history.unshift(record);
-  // Keep storage light while still giving learners a useful history.
-  learner.history = learner.history.slice(0, 100);
-  renderHistory();
-  persistLearner(false);
+  const list = document.getElementById('history-list');
+  const li = document.createElement('li');
+  li.className = 'history-item';
+  if (isWrong) li.classList.add('wrong');
+  li.innerText = logText;
+  list.prepend(li);
+
+  if (learner) {
+    learner.history.unshift({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      text: logText,
+      isWrong: !!isWrong,
+      timestamp: new Date().toISOString()
+    });
+    learner.history = learner.history.slice(0, 100);
+    persistLearner(false);
+  }
 }
 
 function setMode(mode) {
   if (isProcessing) return;
   if (learner && currentMode) saveCurrentSession();
+  learner && (learner.currentSession = null);
   currentMode = mode;
-  hasRestoredCurrentProblem = false;
   digitsCount = parseInt(mode.replace(/\D/g, ''), 10) || 2; 
   isSubtraction = mode.startsWith('sub');
   isDivision = mode.startsWith('div');
@@ -338,24 +355,25 @@ function setMode(mode) {
   } else {
     generateColumnProblem();
   }
+  saveCurrentSession();
 }
 
-function renderDivisionProblem(saveState = true) {
+function generateDivisionProblem() {
   consecutiveWrongs = 0;
-
-  if (saveState) {
-    const minA = Math.pow(10, digitsCount - 1);
-    const maxA = Math.pow(10, digitsCount) - 1;
-
+  
+  const minA = Math.pow(10, digitsCount - 1);
+  const maxA = Math.pow(10, digitsCount) - 1;
+  
+  if (!isRestoringProblem) {
     numB = Math.floor(Math.random() * 8) + 2;
-
+    
     let tempA = Math.floor(Math.random() * (maxA - minA + 1)) + minA;
     tempA = tempA - (tempA % numB);
     if (tempA < minA) tempA += numB;
     numA = tempA;
-
-    currentProblemStr = `${numA} ÷ ${numB}`;
   }
+
+  currentProblemStr = `${numA} ÷ ${numB}`;
 
   const grid = document.getElementById('column-grid');
   grid.innerHTML = '';
@@ -396,7 +414,6 @@ function renderDivisionProblem(saveState = true) {
       workInput.type = 'text';
       workInput.maxLength = 2;
       workInput.className = 'exchange-box working-box';
-      workInput.id = `div-work-${row}-${i}`;
       workInput.placeholder = "rem";
       attachInputSanitizer(workInput, 'number');
       grid.appendChild(workInput);
@@ -405,21 +422,20 @@ function renderDivisionProblem(saveState = true) {
 
   document.getElementById('tutor-msg').innerHTML = 
     `Divide from left to right! Type your answers in the green boxes on top. Use the blue dotted boxes to write your remainders! ➗`;
-  if (saveState) saveCurrentSession();
 }
 
-function renderColumnProblem(saveState = true) {
-  consecutiveWrongs = 0;
-
-  if (saveState) {
-    const minA = Math.pow(10, digitsCount - 1);
-    const maxA = Math.pow(10, digitsCount) - 1;
-
+function generateColumnProblem() {
+  consecutiveWrongs = 0; 
+  
+  const minA = Math.pow(10, digitsCount - 1);
+  const maxA = Math.pow(10, digitsCount) - 1;
+  
+  if (!isRestoringProblem) {
     let valA = Math.floor(Math.random() * (maxA - minA + 1)) + minA;
     let valB;
 
     if (currentMode.startsWith('mult')) {
-      valB = Math.floor(Math.random() * 8) + 2;
+      valB = Math.floor(Math.random() * 8) + 2; 
     } else {
       const minB = Math.pow(10, digitsCount - 1);
       const maxB = Math.pow(10, digitsCount) - 1;
@@ -433,10 +449,10 @@ function renderColumnProblem(saveState = true) {
       numA = valA;
       numB = valB;
     }
-
-    const operatorSymbol = isSubtraction ? '-' : (currentMode.startsWith('mult') ? '×' : '+');
-    currentProblemStr = `${numA} ${operatorSymbol} ${numB}`;
   }
+
+  const operatorSymbol = isSubtraction ? '-' : (currentMode.startsWith('mult') ? '×' : '+');
+  currentProblemStr = `${numA} ${operatorSymbol} ${numB}`;
 
   const grid = document.getElementById('column-grid');
   grid.innerHTML = '';
@@ -473,7 +489,6 @@ function renderColumnProblem(saveState = true) {
       crossInput.type = 'text';
       crossInput.maxLength = 1;
       crossInput.className = 'cross-box';
-      crossInput.id = `cross-${i}`;
       crossInput.placeholder = "/";
       attachInputSanitizer(crossInput, 'cross');
       grid.appendChild(crossInput);
@@ -509,7 +524,6 @@ function renderColumnProblem(saveState = true) {
   } else {
     document.getElementById('tutor-msg').innerHTML = `Start adding from the Ones column! Write any carried numbers in the top yellow boxes! 📦`;
   }
-  if (saveState) saveCurrentSession();
 }
 
 function createCell(text, className = 'cell') {
@@ -517,14 +531,6 @@ function createCell(text, className = 'cell') {
   div.className = className;
   div.innerText = text;
   return div;
-}
-
-function generateDivisionProblem() {
-  renderDivisionProblem(true);
-}
-
-function generateColumnProblem() {
-  renderColumnProblem(true);
 }
 
 function getExpectedExchanges() {
@@ -674,8 +680,10 @@ function checkAnswer() {
     stats.correct++;
     updateStatsUI();
     addToHistory(`${currentProblemStr} = ${expected} ✅`, false);
-    learner.currentSession = null;
-    persistLearner(true);
+    if (learner) {
+      learner.currentSession = null;
+      persistLearner(true);
+    }
     
     document.getElementById('tutor-msg').innerText = "Super star work! Fantastic calculation! 🌟";
     setTimeout(() => {
@@ -797,12 +805,8 @@ function bootstrapLearnerApp() {
     if (event.target.id === 'profile-overlay') closeProfile();
   });
 
-  document.getElementById('welcome-overlay').addEventListener('click', (event) => {
-    if (event.target.id === 'welcome-overlay' && learner) continueLearner();
-  });
-
   if (learner) {
-    stats = { ...learner.stats };
+    stats = { ...stats, ...(learner.stats || {}) };
     updateStatsUI();
     updateLearnerUI();
     renderHistory();
