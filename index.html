@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🌟 Starlight Maths Tutor 🌟</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Load the script deferred so it runs after HTML is loaded -->
+  <script src="script.js" defer></script> 
+</head>
+<body>
+
+  <h1>⭐ Starlight Maths! ⭐</h1>
+
+  <!-- Learner profile / saved progress bar -->
+  <div id="learner-bar" class="learner-bar" hidden>
+    <div class="learner-identity">
+      <div class="learner-avatar" id="learner-avatar">⭐</div>
+      <div>
+        <div class="learner-greeting" id="learner-greeting">Ready to learn?</div>
+        <div class="save-status" id="save-status">Progress is saved automatically</div>
+      </div>
+    </div>
+    <div class="learner-actions">
+      <button id="btn-learner-profile" class="profile-btn" type="button">👤 Profile</button>
+      <button id="btn-change-learner" class="profile-btn" type="button">↔ Change learner</button>
+    </div>
+  </div>
+
+  <div class="main-wrapper">
+    
+    <!-- LEFT PANEL: Statistics -->
+    <div class="side-panel stats-panel">
+      <h2>📊 Data</h2>
+      <div class="stat-box stars-box">
+        <div class="stat-label">Starpoints 🌟</div>
+        <div class="stat-value" id="stat-stars">0</div>
+      </div>
+      <div class="stat-box correct-box">
+        <div class="stat-label">Correct ✅</div>
+        <div class="stat-value" id="stat-correct">0</div>
+      </div>
+      <div class="stat-box wrong-box">
+        <div class="stat-label">Incorrect ❌</div>
+        <div class="stat-value" id="stat-wrong" style="color: var(--wrong);">0</div>
+      </div>
+    </div>
+
+    <!-- CENTER PANEL: Main Game -->
+    <div class="container">
+      
+      <!-- Mode Buttons -->
+      <div class="nav-buttons">
+        <button class="btn btn-red" onclick="setMode('add2')">+ 2-Digit</button>
+        <button class="btn btn-red" onclick="setMode('add3')">+ 3-Digit</button>
+        <button class="btn btn-red" onclick="setMode('add4')">+ 4-Digit</button>
+        <button class="btn btn-red" onclick="setMode('add5')">+ 5-Digit</button>
+        <button class="btn btn-red" onclick="setMode('add6')">+ 6-Digit</button>
+      </div>
+      <div class="nav-buttons">
+        <button class="btn btn-orange" onclick="setMode('sub2')">- 2-Digit</button>
+        <button class="btn btn-orange" onclick="setMode('sub3')">- 3-Digit</button>
+        <button class="btn btn-orange" onclick="setMode('sub4')">- 4-Digit</button>
+        <button class="btn btn-orange" onclick="setMode('sub5')">- 5-Digit</button>
+        <button class="btn btn-orange" onclick="setMode('sub6')">- 6-Digit</button>
+      </div>
+      <div class="nav-buttons">
+        <button class="btn btn-blue" onclick="setMode('mult2')">× 2-Digit</button>
+        <button class="btn btn-blue" onclick="setMode('mult3')">× 3-Digit</button>
+        <button class="btn btn-blue" onclick="setMode('mult4')">× 4-Digit</button>
+        <button class="btn btn-blue" onclick="setMode('mult5')">× 5-Digit</button>
+        <button class="btn btn-blue" onclick="setMode('mult6')">× 6-Digit</button>
+      </div>
+      <div class="nav-buttons">
+        <button class="btn btn-green" onclick="setMode('div2')">÷ 2-Digit</button>
+        <button class="btn btn-green" onclick="setMode('div3')">÷ 3-Digit</button>
+        <button class="btn btn-green" onclick="setMode('div4')">÷ 4-Digit</button>
+        <button class="btn btn-green" onclick="setMode('div5')">÷ 5-Digit</button>
+        <button class="btn btn-green" onclick="setMode('div6')">÷ 6-Digit</button>
+      </div>
+
+      <!-- Column Math Interface -->
+      <div id="column-ui" style="width: 100%; display: flex; flex-direction: column; align-items: center;">
+        <div id="column-grid" class="grid-container">
+          <!-- Populated by JavaScript -->
+        </div>
+        <button id="btn-check-ans" class="btn btn-check" onclick="checkAnswer()">Final Answer! ✅</button>
+      </div>
+
+      <!-- Helpful Assistant Box -->
+      <div class="tutor-box">
+        <div class="tutor-avatar">🤖</div>
+        <div id="tutor-msg">Start adding from the Ones column! Write any carried numbers in the top yellow boxes! 📦</div>
+      </div>
+    </div>
+
+    <!-- RIGHT PANEL: History -->
+    <div class="side-panel history-panel">
+      <h2>📜 History</h2>
+      <ul id="history-list"></ul>
+    </div>
+
+  </div>
+  <!-- First-time / returning-learner welcome screen -->
+  <div id="welcome-overlay" class="welcome-overlay" aria-hidden="true">
+    <div class="welcome-card" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+      <div class="welcome-star">⭐</div>
+      <h2 id="welcome-title">Welcome to Starlight Maths!</h2>
+      <p id="welcome-subtitle" class="welcome-subtitle">Let's save your maths progress as you learn.</p>
+
+      <div id="new-learner-form" class="welcome-form">
+        <label for="learner-name">What is your name?</label>
+        <input id="learner-name" type="text" maxlength="30" autocomplete="name" placeholder="Enter your first name" />
+        <div id="learner-name-error" class="form-error" role="alert"></div>
+        <button id="btn-start-learning" class="welcome-primary" type="button">🚀 Start Learning</button>
+      </div>
+
+      <div id="returning-learner-view" class="returning-view" hidden>
+        <div class="returning-name" id="returning-name">Welcome back!</div>
+        <div class="saved-summary">
+          <div class="saved-summary-item"><span>🌟</span><strong id="resume-stars">0</strong><small>Starpoints</small></div>
+          <div class="saved-summary-item"><span>✅</span><strong id="resume-correct">0</strong><small>Correct</small></div>
+          <div class="saved-summary-item"><span>📜</span><strong id="resume-history">0</strong><small>Saved answers</small></div>
+        </div>
+        <div id="resume-message" class="resume-message">Your last activity is ready to continue.</div>
+        <button id="btn-continue-learning" class="welcome-primary" type="button">▶ Continue Learning</button>
+        <button id="btn-start-new-session" class="welcome-secondary" type="button">✨ Start a New Problem</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lightweight profile details panel -->
+  <div id="profile-overlay" class="profile-overlay" aria-hidden="true">
+    <div class="profile-card" role="dialog" aria-modal="true" aria-labelledby="profile-title">
+      <button id="btn-close-profile" class="modal-close" type="button" aria-label="Close profile">×</button>
+      <div class="profile-avatar-large" id="profile-avatar-large">⭐</div>
+      <h2 id="profile-title">Learner Profile</h2>
+      <div class="profile-name" id="profile-name-display">Learner</div>
+      <div class="profile-meta" id="profile-created-display"></div>
+      <div class="profile-stats">
+        <div><strong id="profile-stars">0</strong><span>Starpoints</span></div>
+        <div><strong id="profile-correct">0</strong><span>Correct</span></div>
+        <div><strong id="profile-wrong">0</strong><span>Incorrect</span></div>
+      </div>
+      <button id="btn-profile-switch" class="welcome-secondary" type="button">↔ Change learner</button>
+    </div>
+  </div>
+</body>
+</html>
